@@ -460,14 +460,15 @@ export default function App() {
 
         </>
         )}
-
+    <section
         <ins className="adsbygoogle"
              style={{ display: "block" }}
              data-ad-client="ca-pub-VOTRE_ID"
              data-ad-slot="VOTRE_EMPLACEMENT"
              data-ad-format="auto"
              data-full-width-responsive="true"></ins>
-
+     </section>
+        
         <footer className="mt-8 text-center text-xs text-slate-400">
           <div className="flex flex-wrap justify-center gap-4 mb-2">
             <button onClick={() => goTo("how")} className="text-blue-700 hover:underline font-medium">Comment ça marche</button>
