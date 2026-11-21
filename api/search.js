@@ -5,7 +5,12 @@
 // (Vercel > Settings > Environment Variables). Ne jamais mettre la clé dans App.tsx.
 
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+
+const OVERPASS_SERVERS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+];
 
 const SHOP_LABELS = {
   hardware: "quincaillerie",
@@ -15,6 +20,32 @@ const SHOP_LABELS = {
   paint: "peinture / décoration",
   appliance: "électroménager",
   secondhand: "occasion",
+  seafood: "poissonnerie",
+  supermarket: "supermarché",
+  convenience: "épicerie",
+  frozen_food: "surgelés",
+  greengrocer: "primeur",
+  bakery: "boulangerie",
+  butcher: "boucherie",
+  deli: "traiteur",
+  beverages: "boissons",
+  chemist: "parapharmacie",
+  books: "librairie",
+  stationery: "papeterie",
+  clothes: "vêtements",
+  shoes: "chaussures",
+  sports: "articles de sport",
+  bicycle: "magasin de vélos",
+  car_parts: "pièces auto",
+  garden_centre: "jardinage",
+  furniture: "meubles",
+  mobile_phone: "téléphonie",
+  computer: "informatique",
+  photo: "photo",
+  toys: "jouets",
+  gift: "cadeaux",
+  florist: "fleuriste",
+  pet: "animalerie",
 };
 
 const ALLOWED_SHOPS = Object.keys(SHOP_LABELS);
@@ -43,6 +74,8 @@ async function askMistral(apiKey, params) {
 L'utilisateur fait sa recherche en ${queryLang}, dans la ville de ${cityName} où la langue locale est le ${targetLang}.
 ${imageBase64 ? "Une photo est fournie : identifie d'abord l'objet principal qu'elle montre." : ""}
 Décris l'objet de façon courante et concrète, comme le dirait un client en magasin.
+Choisis les catégories de magasins adaptées à CET objet avec soin
+(exemples : poisson → seafood ou supermarket ; tournevis → hardware ou doityourself ; pile → electronics ou supermarket).
 Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, au format exact :
 {
   "objet_fr": "nom de l'objet en français",
@@ -88,24 +121,56 @@ function overpassQuery(categories, lat, lon, radiusMeters) {
   return `[out:json][timeout:25];(\n  ${clauses.join("\n  ")}\n);out center 40;`;
 }
 
+async function fetchOverpassAny(query) {
+  let lastError = "";
+  for (const server of OVERPASS_SERVERS) {
+    try {
+      const response = await fetch(server, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "findforme/1.0 (+https://www.findforme.biz)",
+        },
+        body: "data=" + encodeURIComponent(query),
+      });
+      if (!response.ok) {
+        lastError = `${server} → HTTP ${response.status}`;
+        continue;
+      }
+      const data = await response.json();
+      if (Array.isArray(data.elements)) {
+        return { elements: data.elements };
+      }
+      lastError = `${server} → réponse inattendue`;
+    } catch (err) {
+      lastError = `${server} → ${err.message}`;
+    }
+  }
+  return {
+    elements: [],
+    error: `aucun serveur de carte n'a répondu (${lastError}). Réessayez dans une minute.`,
+  };
+}
+
 async function findStores(categoriesAsked, lat, lon) {
   const safe = (categoriesAsked || []).filter((c) => ALLOWED_SHOPS.includes(c));
-  const categories = safe.length > 0 ? safe : ["hardware", "doityourself", "electronics"];
+  const categories = safe.length > 0 ? safe : ["supermarket", "hardware", "doityourself"];
 
   let elements = [];
-  for (const radius of [8000, 15000, 30000]) {
-    const response = await fetch(OVERPASS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "data=" + encodeURIComponent(overpassQuery(categories, lat, lon, radius)),
-    });
-    if (!response.ok) continue;
-    const data = await response.json();
-    elements = data.elements || [];
-    if (elements.length > 0) break;
+  let overpassError = null;
+  for (const radius of [8000, 20000, 40000]) {
+    const attempt = await fetchOverpassAny(overpassQuery(categories, lat, lon, radius));
+    if (attempt.error) {
+      overpassError = attempt.error;
+      break;
+    }
+    if (attempt.elements.length > 0) {
+      elements = attempt.elements;
+      break;
+    }
   }
 
-  const stores = [];
+  const storesRaw = [];
   for (const el of elements) {
     const sLat = el.lat ?? el.center?.lat;
     const sLon = el.lon ?? el.center?.lon;
@@ -116,7 +181,7 @@ async function findStores(categoriesAsked, lat, lon) {
       tags["addr:postcode"],
       tags["addr:city"],
     ].filter(Boolean).join(", ");
-    stores.push({
+    storesRaw.push({
       name: tags.name || tags.operator || tags.brand || "Magasin non nommé",
       address: address || null,
       lat: sLat,
@@ -128,7 +193,7 @@ async function findStores(categoriesAsked, lat, lon) {
 
   // Dédoublonnage par nom et position, tri par distance
   const seen = new Set();
-  return stores
+  const stores = storesRaw
     .sort((a, b) => a.distanceKm - b.distanceKm)
     .filter((s) => {
       const key = s.name + "@" + s.lat.toFixed(4) + "," + s.lon.toFixed(4);
@@ -137,6 +202,8 @@ async function findStores(categoriesAsked, lat, lon) {
       return true;
     })
     .slice(0, 12);
+
+  return { stores, overpassError };
 }
 
 export default async function handler(req, res) {
@@ -170,13 +237,15 @@ export default async function handler(req, res) {
       cityName: cityName || "la ville donnée par la position",
     });
 
-    const stores = await findStores(analysed.categories_shop, lat, lon);
+    const { stores, overpassError } = await findStores(analysed.categories_shop, lat, lon);
 
     return res.status(200).json({
       objet_fr: analysed.objet_fr,
       objet_local: analysed.objet_local,
       categoryLabels: (analysed.categories_shop || []).map((c) => SHOP_LABELS[c] || c),
-      stockNote: "Disponibilité non vérifiée en temps réel : appelez le magasin si besoin.",
+      stockNote: overpassError
+        ? `Carte indisponible pour le moment : ${overpassError}`
+        : "Disponibilité non vérifiée en temps réel : appelez le magasin si besoin.",
       stores,
     });
   } catch (err) {
