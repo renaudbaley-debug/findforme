@@ -460,14 +460,29 @@ export default function App() {
 
         </>
         )}
-    <section
-        <ins className="adsbygoogle"
-             style={{ display: "block" }}
-             data-ad-client="ca-pub-VOTRE_ID"
-             data-ad-slot="VOTRE_EMPLACEMENT"
-             data-ad-format="auto"
-             data-full-width-responsive="true"></ins>
-     </section>
+   function AdsBanner() {
+  React.useEffect(() => {
+    try {
+      const w = window as unknown as { adsbygoogle?: unknown[] };
+      w.adsbygoogle = w.adsbygoogle || [];
+      w.adsbygoogle.push({});
+    } catch {
+      /* publicité indisponible, on ignore */
+    }
+  }, []);
+  return (
+    <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
+      <ins
+        className="adsbygoogle"
+        style={{ display: "block" }}
+        data-ad-client="ca-pub-9159260142857610"
+        data-ad-slot="1234567890"
+        data-ad-format="auto"
+        data-full-width-responsive="true"
+      ></ins>
+    </section>
+  );
+}
         
         <footer className="mt-8 text-center text-xs text-slate-400">
           <div className="flex flex-wrap justify-center gap-4 mb-2">
