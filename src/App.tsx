@@ -347,9 +347,12 @@ export default function App() {
           </>
         )}
 
-        <section className="mt-6 rounded-2xl border-2 border-dashed border-slate-300 py-5 text-center text-xs text-slate-400">
-          Espace publicitaire · Google AdSense en production (revenus versés automatiquement chaque mois)
-        </section>
+       <ins className="adsbygoogle"
+           style={{ display: "block" }}
+           data-ad-client="ca-pub-VOTRE_ID"
+           data-ad-slot="VOTRE_EMPLACEMENT"
+           data-ad-format="auto"
+           data-full-width-responsive="true"></ins>
 
         <footer className="mt-8 text-center text-xs text-slate-400">
           findforme.biz · IA Mistral + données OpenStreetMap · disponibilité des stocks non vérifiée en temps réel.
