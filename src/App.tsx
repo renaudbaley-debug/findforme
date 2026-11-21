@@ -80,6 +80,107 @@ function compressImage(file: File): Promise<{ base64: string; type: string }> {
   });
 }
 
+function DocPage({ title, onBack, children }: { title: string; onBack: () => void; children: React.ReactNode }) {
+  return (
+    <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mt-5">
+      <button
+        onClick={() => { onBack(); window.scrollTo(0, 0); }}
+        className="text-sm text-blue-700 hover:underline mb-4 inline-block"
+      >
+        ← Retour à la recherche
+      </button>
+      <h2 className="text-2xl font-bold text-slate-800 mb-5">{title}</h2>
+      <div className="space-y-4 text-sm text-slate-600 leading-relaxed [&_h3]:text-slate-800 [&_h3]:font-semibold [&_h3]:mt-2">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function HowPage({ onBack }: { onBack: () => void }) {
+  return (
+    <DocPage title="Comment ça marche" onBack={onBack}>
+      <h3>1. Décrivez l'objet recherché</h3>
+      <p>
+        Par texte, dans votre langue ("un tournevis"), ou par une simple photo de l'objet.
+        L'intelligence artificielle identifie l'objet, quel que soit le niveau de précision de votre
+        description, et le traduit dans la langue du pays où vous vous trouvez avec les mots que
+        les commerçants comprennent : à Berlin, "tournevis" devient "Schraubendreher".
+      </p>
+      <h3>2. Nous cherchons les magasins autour de vous</h3>
+      <p>
+        Autour de votre position (si vous l'autorisez) ou de la ville choisie, nous consultons les
+        données publiques d'OpenStreetMap pour trouver les magasins qui vendent ce type de produit,
+        triés par distance. La disponibilité exacte en stock n'est pas vérifiée en temps réel :
+        le site vous le signale clairement, et vous pouvez appeler le magasin depuis sa fiche.
+      </p>
+      <h3>3. Vous partez avec le bon mot et un itinéraire</h3>
+      <p>
+        Chaque résultat propose un itinéraire direct. Imprimez ou montrez la traduction fournie
+        sur place, et demandez le mot dans la langue locale. C'est tout : FindForMe fait le pont
+        entre votre langue et le magasin d'à côté.
+      </p>
+      <h3>Qui fournit quoi ?</h3>
+      <p>
+        L'analyse des textes et des photos est réalisée par les modèles d'IA de Mistral AI. Les
+        magasins proviennent d'OpenStreetMap, une carte libre du monde. Les itinéraires sont
+        proposés par Google Maps.
+      </p>
+    </DocPage>
+  );
+}
+
+function LegalPage({ onBack }: { onBack: () => void }) {
+  return (
+    <DocPage title="Confidentialité et mentions légales" onBack={onBack}>
+      <h3>Éditeur du site</h3>
+      <p>
+        Site findforme.biz, édité à titre personnel par [votre prénom et nom], [votre adresse],
+        contact : [votre adresse e-mail].
+      </p>
+      <h3>Hébergement</h3>
+      <p>Site hébergé par Vercel (vercel.com). Adresses de Vercel : vercel.com/privacy-policy.</p>
+      <h3>Données envoyées lors d'une recherche</h3>
+      <p>
+        Aucun compte, aucune inscription : le site ne vous demande pas d'identité. Lors d'une
+        recherche, votre texte ou votre photo, ainsi que la position choisie, sont envoyés à
+        notre serveur pour produire la réponse : le texte ou la photo est transmis au service
+        d'analyse (Mistral AI) pour identifier l'objet et le traduire ; la position sert à
+        chercher les magasins proches dans OpenStreetMap. Ces éléments servent uniquement à
+        répondre à votre demande.
+      </p>
+      <h3>Géolocalisation</h3>
+      <p>
+        La position précise n'est utilisée que si vous cliquez sur "Utiliser ma position
+        réelle" et autorisez le navigateur à la partager. Sinon, seule la ville choisie est
+        utilisée. Aucune position n'est conservée après la recherche.
+      </p>
+      <h3>Cookies et publicité</h3>
+      <p>
+        Le site ne dépose aujourd'hui aucun cookie. Si des espaces publicitaires Google
+        (AdSense) sont activés, des cookies publicitaires de Google et de ses partenaires
+        pourront être déposés ; une bannière de consentement sera affichée. Vous pouvez à tout
+        moment paramétrer vos préférences.publicitaires sur
+        https://policies.google.com/technologies/ads?hl=fr
+      </p>
+      <h3>Journaux techniques</h3>
+      <p>
+        Comme tout site, l'hébergeur (Vercel) enregistre des journaux techniques standards
+        (adresse IP, date, page demandée) pendant une durée limitée, à des fins de sécurité
+        et de lutte contre les abus.
+      </p>
+      <h3>Vos droits (RGPD)</h3>
+      <p>
+        Conformément au Règlement général sur la protection des données, vous disposez d'un
+        droit d'accès, de rectification et d'effacement des informations vous concernant.
+        Écrivez à [votre adresse e-mail] ; réponse sous 30 jours.
+      </p>
+      <h3>Droit applicable</h3>
+      <p>Le site est soumis au droit de [votre pays].</p>
+    </DocPage>
+  );
+}
+
 export default function App() {
   const [cityId, setCityId] = useState("berlin");
   const [queryLang, setQueryLang] = useState("français");
@@ -92,6 +193,12 @@ export default function App() {
   const [customPos, setCustomPos] = useState<{ lat: number; lon: number; label: string } | null>(null);
   const [geoMsg, setGeoMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [page, setPage] = useState<"home" | "how" | "legal">("home");
+
+  const goTo = (p: "home" | "how" | "legal") => {
+    setPage(p);
+    window.scrollTo(0, 0);
+  };
 
   const city = CITIES.find((c) => c.id === cityId)!;
   const pos = customPos ?? { lat: city.lat, lon: city.lon, label: `${city.name} (centre-ville)` };
@@ -171,6 +278,10 @@ export default function App() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 pb-16">
+        {page === "how" && <HowPage onBack={() => goTo("home")} />}
+        {page === "legal" && <LegalPage onBack={() => goTo("home")} />}
+        {page === "home" && (
+        <>
         {/* Où chercher */}
         <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 -mt-6">
           <h2 className="font-semibold mb-3 flex items-center gap-2">
@@ -347,14 +458,21 @@ export default function App() {
           </>
         )}
 
-       <ins className="adsbygoogle"
-           style={{ display: "block" }}
-           data-ad-client="ca-pub-VOTRE_ID"
-           data-ad-slot="VOTRE_EMPLACEMENT"
-           data-ad-format="auto"
-           data-full-width-responsive="true"></ins>
+        </>
+        )}
+
+        <ins className="adsbygoogle"
+             style={{ display: "block" }}
+             data-ad-client="ca-pub-VOTRE_ID"
+             data-ad-slot="VOTRE_EMPLACEMENT"
+             data-ad-format="auto"
+             data-full-width-responsive="true"></ins>
 
         <footer className="mt-8 text-center text-xs text-slate-400">
+          <div className="flex flex-wrap justify-center gap-4 mb-2">
+            <button onClick={() => goTo("how")} className="text-blue-700 hover:underline font-medium">Comment ça marche</button>
+            <button onClick={() => goTo("legal")} className="text-blue-700 hover:underline font-medium">Confidentialité et mentions légales</button>
+          </div>
           findforme.biz · IA Mistral + données OpenStreetMap · disponibilité des stocks non vérifiée en temps réel.
         </footer>
       </main>
