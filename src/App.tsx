@@ -1,28 +1,169 @@
 // src/App.tsx
-// Version production de findforme.biz : appelle /api/search (Vercel fonction
-// serverless + Mistral + OpenStreetMap). Remplace tout le contenu précédent.
+// Version production de findforme.biz : appelle /api/search (fonction serverless
+// Vercel + Mistral + OpenStreetMap). Interface bilingue FR / EN.
+// Replace tout le contenu précédent de src/App.tsx.
 
 import React, { useRef, useState } from "react";
+
+/* ------------------------------------------------------------------ */
+/* Données                                                             */
+/* ------------------------------------------------------------------ */
 
 type City = {
   id: string;
   name: string;
-  country: string;
   flag: string;
   lat: number;
   lon: number;
-  targetLang: string;
+  // Langue locale de la ville, envoyée au backend (prompt Mistral)
+  target: { fr: string; en: string };
 };
 
 const CITIES: City[] = [
-  { id: "berlin", name: "Berlin", country: "Allemagne", flag: "🇩🇪", lat: 52.52, lon: 13.405, targetLang: "allemand" },
-  { id: "paris", name: "Paris", country: "France", flag: "🇫🇷", lat: 48.8566, lon: 2.3522, targetLang: "français" },
-  { id: "brussels", name: "Bruxelles", country: "Belgique", flag: "🇧🇪", lat: 50.8503, lon: 4.3517, targetLang: "français" },
-  { id: "amsterdam", name: "Amsterdam", country: "Pays-Bas", flag: "🇳🇱", lat: 52.3676, lon: 4.9041, targetLang: "néerlandais" },
-  { id: "london", name: "Londres", country: "Royaume-Uni", flag: "🇬🇧", lat: 51.5074, lon: -0.1278, targetLang: "anglais" },
+  { id: "berlin", name: "Berlin", flag: "🇩🇪", lat: 52.52, lon: 13.405, target: { fr: "allemand", en: "German" } },
+  { id: "paris", name: "Paris", flag: "🇫🇷", lat: 48.8566, lon: 2.3522, target: { fr: "français", en: "French" } },
+  { id: "brussels", name: "Bruxelles", flag: "🇧🇪", lat: 50.8503, lon: 4.3517, target: { fr: "français", en: "French" } },
+  { id: "amsterdam", name: "Amsterdam", flag: "🇳🇱", lat: 52.3676, lon: 4.9041, target: { fr: "néerlandais", en: "Dutch" } },
+  { id: "london", name: "London", flag: "🇬🇧", lat: 51.5074, lon: -0.1278, target: { fr: "anglais", en: "English" } },
 ];
 
-const LANGS = ["français", "anglais", "allemand", "néerlandais", "espagnol"];
+// Langues dans lesquelles l'utilisateur peut formuler sa demande.
+// La valeur envoyée au backend reste en français.
+const QUERY_LANGS: { value: string; fr: string; en: string }[] = [
+  { value: "français", fr: "Français", en: "French" },
+  { value: "anglais", fr: "Anglais", en: "English" },
+  { value: "allemand", fr: "Allemand", en: "German" },
+  { value: "néerlandais", fr: "Néerlandais", en: "Dutch" },
+  { value: "espagnol", fr: "Espagnol", en: "Spanish" },
+];
+
+/* ------------------------------------------------------------------ */
+/* Textes de l'interface, bilingues                                    */
+/* ------------------------------------------------------------------ */
+
+const COPY = {
+  fr: {
+    tagline: "Trouvez l'objet qu'il vous faut, près de vous, dans votre langue",
+    searchFor: "Où cherchez-vous ?",
+    otherPlace: "Vous cherchez pour un autre endroit ? Choisissez la ville, ou :",
+    useGps: "📍 Utiliser ma position réelle",
+    geoOk: "Position réelle détectée : la recherche se fera autour de vous.",
+    geoFail: "Position inaccessible : autorisez la géolocalisation ou choisissez une ville.",
+    tabText: "Recherche par texte",
+    tabPhoto: "Recherche par photo",
+    askIn: "Je demande en : ",
+    placeholder: "Ex. : « je cherche un tournevis »",
+    photoPrompt: "Prenez en photo l'objet ou importez une image",
+    photoReady: "Image prête à être analysée : ",
+    findBtn: "Trouver près de moi",
+    finding: "Recherche en cours…",
+    errEmptyText: "Tapez d'abord le nom de l'objet recherché.",
+    errNoImage: "Importez d'abord une photo de l'objet.",
+    errImage: "Impossible de lire cette image. Essayez une photo JPG ou PNG.",
+    errBackend: "Le backend n'est pas encore déployé : créez le fichier api/search.js dans le dépôt (voir le canvas backend), puis laissez Vercel redéployer.",
+    errNetwork: "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
+    translateTitle: "Exprimez votre demande sur place",
+    inFrench: "En français",
+    localLang: (l: string) => `Langue locale (${l})`,
+    askInStore: (city: string, word: string) => `À ${city}, demandez « ${word} » en magasin.`,
+    badgeStock: "⚠️ Disponibilité non vérifiée en temps réel : appelez le magasin si besoin.",
+    osmNote: "Magasins issus d'OpenStreetMap, triés par distance.",
+    storesFound: (n: number, city: string) => `${n} magasin${n > 1 ? "s" : ""} trouvé${n > 1 ? "s" : ""} près de ${city}`,
+    noStores: "Aucun magasin trouvé à proximité",
+    cityCenter: (name: string) => `${name} (centre-ville)`,
+    myPosition: "Ma position actuelle",
+    route: "Itinéraire",
+    back: "← Retour à la recherche",
+    howTitle: "Comment ça marche",
+    legalTitle: "Confidentialité et mentions légales",
+    howLink: "Comment ça marche",
+    legalLink: "Confidentialité et mentions légales",
+    inputLabelFR: "En français",
+    inQueryLang: (l: string) => `Dans votre langue (${l})`,
+  },
+  en: {
+    tagline: "Find the object you need, near you, in your own language",
+    searchFor: "Where are you searching?",
+    otherPlace: "Searching for another place? Pick a city, or:",
+    useGps: "📍 Use my real location",
+    geoOk: "Real location detected: the search will run around you.",
+    geoFail: "Location unavailable: allow geolocation or pick a city.",
+    tabText: "Search by text",
+    tabPhoto: "Search by photo",
+    askIn: "I'm asking in: ",
+    placeholder: 'e.g. "I need a screwdriver"',
+    photoPrompt: "Take a photo of the object or upload an image",
+    photoReady: "Image ready to be analysed: ",
+    findBtn: "Find near me",
+    finding: "Searching…",
+    errEmptyText: "First type the name of the object you need.",
+    errNoImage: "First upload a photo of the object.",
+    errImage: "This image cannot be read. Try a JPG or PNG photo.",
+    errBackend: "The backend is not deployed yet: create the api/search.js file in the repository (see the backend canvas), then let Vercel redeploy.",
+    errNetwork: "The server cannot be reached. Check your connection and try again.",
+    translateTitle: "How to ask for it locally",
+    inFrench: "In French",
+    localLang: (l: string) => `Local language (${l})`,
+    askInStore: (city: string, word: string) => `In ${city}, ask for "${word}" in the store.`,
+    badgeStock: "⚠️ Availability not verified in real time: call the store if needed.",
+    osmNote: "Stores from OpenStreetMap, sorted by distance.",
+    storesFound: (n: number, city: string) => `${n} store${n > 1 ? "s" : ""} found near ${city}`,
+    noStores: "No store found nearby",
+    cityCenter: (name: string) => `${name} (city centre)`,
+    myPosition: "My current location",
+    route: "Directions",
+    back: "← Back to search",
+    howTitle: "How it works",
+    legalTitle: "Privacy and legal notice",
+    howLink: "How it works",
+    legalLink: "Privacy and legal notice",
+    inputLabelFR: "In French",
+    inQueryLang: (l: string) => `In your language (${l})`,
+  },
+};
+
+/* Contenu des pages documentaires, bilingue */
+const HOW_SECTIONS = {
+  fr: [
+    { h: "1. Décrivez l'objet recherché", p: "Par texte, dans votre langue, ou par une simple photo de l'objet. L'intelligence artificielle identifie l'objet et le traduit dans la langue du pays où vous vous trouvez avec les mots que les commerçants comprennent : à Berlin, « tournevis » devient « Schraubendreher »." },
+    { h: "2. Nous cherchons les magasins autour de vous", p: "Autour de votre position (si vous l'autorisez) ou de la ville choisie, nous consultons les données publiques d'OpenStreetMap pour trouver les magasins qui vendent ce type de produit, triés par distance. La disponibilité exacte en stock n'est pas vérifiée en temps réel : le site vous le signale clairement." },
+    { h: "3. Vous partez avec le bon mot et un itinéraire", p: "Chaque résultat propose un itinéraire direct. Montrez la traduction fournie sur place et demandez le mot dans la langue locale. FindForMe fait le pont entre votre langue et le magasin d'à côté." },
+    { h: "Qui fournit quoi ?", p: "L'analyse des textes et des photos est réalisée par les modèles d'IA de Mistral AI. Les magasins proviennent d'OpenStreetMap, une carte libre du monde. Les itinéraires sont proposés par Google Maps." },
+  ],
+  en: [
+    { h: "1. Describe the object you need", p: "By text, in your own language, or simply with a photo. The AI identifies the object and translates it into the local language with words shopkeepers understand: in Berlin, \"screwdriver\" becomes \"Schraubendreher\"." },
+    { h: "2. We look for stores around you", p: "Around your position (if you allow it) or around the chosen city, we consult OpenStreetMap public data to find stores selling that type of product, sorted by distance. Exact stock availability is not verified in real time: the site tells you clearly." },
+    { h: "3. You leave with the right word and directions", p: "Every result offers a direct route. Show the provided translation and ask for the word in the local language. FindForMe bridges your language and the store next door." },
+    { h: "Who provides what?", p: "Text and photo analysis is done by Mistral AI models. Stores come from OpenStreetMap, a free map of the world. Directions are provided by Google Maps." },
+  ],
+};
+
+const LEGAL_SECTIONS = {
+  fr: [
+    { h: "Éditeur du site", p: "Site findforme.biz, édité à titre personnel par [votre prénom et nom], [votre adresse], contact : [votre adresse e-mail]." },
+    { h: "Hébergement", p: "Site hébergé par Vercel (vercel.com)." },
+    { h: "Données envoyées lors d'une recherche", p: "Aucun compte, aucune inscription : le site ne vous demande pas d'identité. Lors d'une recherche, votre texte ou votre photo, ainsi que la position choisie, sont envoyés à notre serveur : le texte ou la photo est transmis au service d'analyse (Mistral AI) pour identifier l'objet et le traduire ; la position sert à chercher les magasins proches dans OpenStreetMap. Ces éléments servent uniquement à répondre à votre demande." },
+    { h: "Géolocalisation", p: "La position précise n'est utilisée que si vous cliquez sur « Utiliser ma position réelle » et autorisez le navigateur à la partager. Sinon, seule la ville choisie est utilisée. Aucune position n'est conservée après la recherche." },
+    { h: "Cookies et publicité", p: "Le site dépose aujourd'hui des cookies publicitaires Google (AdSense) et de ses partenaires. Vous pouvez à tout moment paramétrer vos préférences publicitaires sur https://policies.google.com/technologies/ads?hl=fr" },
+    { h: "Journaux techniques", p: "Comme tout site, l'hébergeur (Vercel) enregistre des journaux techniques standards (adresse IP, date, page demandée) pendant une durée limitée, à des fins de sécurité et de lutte contre les abus." },
+    { h: "Vos droits (RGPD)", p: "Conformément au Règlement général sur la protection des données, vous disposez d'un droit d'accès, de rectification et d'effacement des informations vous concernant. Écrivez à [votre adresse e-mail] ; réponse sous 30 jours." },
+    { h: "Droit applicable", p: "Le site est soumis au droit de [votre pays]." },
+  ],
+  en: [
+    { h: "Site publisher", p: "Website findforme.biz, published on a personal basis by [your first and last name], [your address], contact: [your e-mail address]." },
+    { h: "Hosting", p: "Hosted by Vercel (vercel.com)." },
+    { h: "Data sent during a search", p: "No account, no sign-up: the site does not ask for your identity. During a search, your text or photo, together with the chosen location, are sent to our server: the text or photo is passed to the analysis service (Mistral AI) to identify and translate the object; the location is used to find nearby stores in OpenStreetMap. These elements are used solely to answer your request." },
+    { h: "Geolocation", p: "Your precise position is only used if you click \"Use my real location\" and let your browser share it. Otherwise, only the chosen city is used. No position is kept after the search." },
+    { h: "Cookies and advertising", p: "The site currently deposits Google (AdSense) advertising cookies and those of its partners. You can manage your advertising preferences at any time on https://policies.google.com/technologies/ads" },
+    { h: "Technical logs", p: "Like any website, the host (Vercel) records standard technical logs (IP address, date, requested page) for a limited period, for security and abuse prevention purposes." },
+    { h: "Your rights (GDPR)", p: "Under the General Data Protection Regulation, you have a right of access, rectification and erasure of your personal information. Write to [your e-mail address]; reply within 30 days." },
+    { h: "Applicable law", p: "The site is governed by the law of [your country]." },
+  ],
+};
+
+/* ------------------------------------------------------------------ */
+/* Types et utilitaires                                                */
+/* ------------------------------------------------------------------ */
 
 type Store = {
   name: string;
@@ -67,7 +208,7 @@ function compressImage(file: File): Promise<{ base64: string; type: string }> {
       canvas.height = Math.round(img.height * scale);
       const ctx = canvas.getContext("2d");
       if (!ctx) {
-        reject(new Error("Impossible de lire l'image."));
+        reject(new Error("canvas"));
         return;
       }
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -75,109 +216,33 @@ function compressImage(file: File): Promise<{ base64: string; type: string }> {
       const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
       resolve({ base64: dataUrl.split(",")[1], type: "image/jpeg" });
     };
-    img.onerror = () => reject(new Error("Image illisible."));
+    img.onerror = () => reject(new Error("image"));
     img.src = url;
   });
 }
 
-function DocPage({ title, onBack, children }: { title: string; onBack: () => void; children: React.ReactNode }) {
+/* ------------------------------------------------------------------ */
+/* Composants de page                                                  */
+/* ------------------------------------------------------------------ */
+
+type UiLang = "fr" | "en";
+
+function DocPage({ title, onBack, sections, back }: { title: string; onBack: () => void; sections: { h: string; p: string }[]; back: string }) {
   return (
     <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mt-5">
-      <button
-        onClick={() => { onBack(); window.scrollTo(0, 0); }}
-        className="text-sm text-blue-700 hover:underline mb-4 inline-block"
-      >
-        ← Retour à la recherche
+      <button onClick={() => { onBack(); window.scrollTo(0, 0); }} className="text-sm text-blue-700 hover:underline mb-4 inline-block">
+        {back}
       </button>
       <h2 className="text-2xl font-bold text-slate-800 mb-5">{title}</h2>
       <div className="space-y-4 text-sm text-slate-600 leading-relaxed [&_h3]:text-slate-800 [&_h3]:font-semibold [&_h3]:mt-2">
-        {children}
+        {sections.map((s) => (
+          <div key={s.h}>
+            <h3>{s.h}</h3>
+            <p>{s.p}</p>
+          </div>
+        ))}
       </div>
     </section>
-  );
-}
-
-function HowPage({ onBack }: { onBack: () => void }) {
-  return (
-    <DocPage title="Comment ça marche" onBack={onBack}>
-      <h3>1. Décrivez l'objet recherché</h3>
-      <p>
-        Par texte, dans votre langue ("un tournevis"), ou par une simple photo de l'objet.
-        L'intelligence artificielle identifie l'objet, quel que soit le niveau de précision de votre
-        description, et le traduit dans la langue du pays où vous vous trouvez avec les mots que
-        les commerçants comprennent : à Berlin, "tournevis" devient "Schraubendreher".
-      </p>
-      <h3>2. Nous cherchons les magasins autour de vous</h3>
-      <p>
-        Autour de votre position (si vous l'autorisez) ou de la ville choisie, nous consultons les
-        données publiques d'OpenStreetMap pour trouver les magasins qui vendent ce type de produit,
-        triés par distance. La disponibilité exacte en stock n'est pas vérifiée en temps réel :
-        le site vous le signale clairement, et vous pouvez appeler le magasin depuis sa fiche.
-      </p>
-      <h3>3. Vous partez avec le bon mot et un itinéraire</h3>
-      <p>
-        Chaque résultat propose un itinéraire direct. Imprimez ou montrez la traduction fournie
-        sur place, et demandez le mot dans la langue locale. C'est tout : FindForMe fait le pont
-        entre votre langue et le magasin d'à côté.
-      </p>
-      <h3>Qui fournit quoi ?</h3>
-      <p>
-        L'analyse des textes et des photos est réalisée par les modèles d'IA de Mistral AI. Les
-        magasins proviennent d'OpenStreetMap, une carte libre du monde. Les itinéraires sont
-        proposés par Google Maps.
-      </p>
-    </DocPage>
-  );
-}
-
-function LegalPage({ onBack }: { onBack: () => void }) {
-  return (
-    <DocPage title="Confidentialité et mentions légales" onBack={onBack}>
-      <h3>Éditeur du site</h3>
-      <p>
-        Site findforme.biz, édité à titre personnel par [votre prénom et nom], [votre adresse],
-        contact : [votre adresse e-mail].
-      </p>
-      <h3>Hébergement</h3>
-      <p>Site hébergé par Vercel (vercel.com). Adresses de Vercel : vercel.com/privacy-policy.</p>
-      <h3>Données envoyées lors d'une recherche</h3>
-      <p>
-        Aucun compte, aucune inscription : le site ne vous demande pas d'identité. Lors d'une
-        recherche, votre texte ou votre photo, ainsi que la position choisie, sont envoyés à
-        notre serveur pour produire la réponse : le texte ou la photo est transmis au service
-        d'analyse (Mistral AI) pour identifier l'objet et le traduire ; la position sert à
-        chercher les magasins proches dans OpenStreetMap. Ces éléments servent uniquement à
-        répondre à votre demande.
-      </p>
-      <h3>Géolocalisation</h3>
-      <p>
-        La position précise n'est utilisée que si vous cliquez sur "Utiliser ma position
-        réelle" et autorisez le navigateur à la partager. Sinon, seule la ville choisie est
-        utilisée. Aucune position n'est conservée après la recherche.
-      </p>
-      <h3>Cookies et publicité</h3>
-      <p>
-        Le site ne dépose aujourd'hui aucun cookie. Si des espaces publicitaires Google
-        (AdSense) sont activés, des cookies publicitaires de Google et de ses partenaires
-        pourront être déposés ; une bannière de consentement sera affichée. Vous pouvez à tout
-        moment paramétrer vos préférences.publicitaires sur
-        https://policies.google.com/technologies/ads?hl=fr
-      </p>
-      <h3>Journaux techniques</h3>
-      <p>
-        Comme tout site, l'hébergeur (Vercel) enregistre des journaux techniques standards
-        (adresse IP, date, page demandée) pendant une durée limitée, à des fins de sécurité
-        et de lutte contre les abus.
-      </p>
-      <h3>Vos droits (RGPD)</h3>
-      <p>
-        Conformément au Règlement général sur la protection des données, vous disposez d'un
-        droit d'accès, de rectification et d'effacement des informations vous concernant.
-        Écrivez à [votre adresse e-mail] ; réponse sous 30 jours.
-      </p>
-      <h3>Droit applicable</h3>
-      <p>Le site est soumis au droit de [votre pays].</p>
-    </DocPage>
   );
 }
 
@@ -205,7 +270,12 @@ function AdsBanner() {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Application                                                         */
+/* ------------------------------------------------------------------ */
+
 export default function App() {
+  const [uiLang, setUiLang] = useState<UiLang>("fr");
   const [cityId, setCityId] = useState("berlin");
   const [queryLang, setQueryLang] = useState("français");
   const [mode, setMode] = useState<"text" | "photo">("text");
@@ -219,13 +289,15 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [page, setPage] = useState<"home" | "how" | "legal">("home");
 
+  const copy = COPY[uiLang];
   const goTo = (p: "home" | "how" | "legal") => {
     setPage(p);
     window.scrollTo(0, 0);
   };
 
   const city = CITIES.find((c) => c.id === cityId)!;
-  const pos = customPos ?? { lat: city.lat, lon: city.lon, label: `${city.name} (centre-ville)` };
+  const pos = customPos ?? { lat: city.lat, lon: city.lon, label: copy.cityCenter(city.name) };
+  const localLangName = city.target[uiLang];
 
   const onPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -236,7 +308,7 @@ export default function App() {
       setResults(null);
       setError(null);
     } catch {
-      setError("Impossible de lire cette image. Essayez une photo JPG ou PNG.");
+      setError(copy.errImage);
     }
   };
 
@@ -244,11 +316,11 @@ export default function App() {
     setError(null);
     setResults(null);
     if (mode === "text" && !query.trim()) {
-      setError("Tapez d'abord le nom de l'objet recherché.");
+      setError(copy.errEmptyText);
       return;
     }
     if (mode === "photo" && !imageInfo) {
-      setError("Importez d'abord une photo de l'objet.");
+      setError(copy.errNoImage);
       return;
     }
     setLoading(true);
@@ -263,13 +335,13 @@ export default function App() {
           lat: pos.lat,
           lon: pos.lon,
           queryLang,
-          targetLang: city.targetLang,
-          cityName: customPos ? "une ville proche de la position" : city.name,
+          targetLang: city.target.fr,
+          cityName: customPos ? "la position actuelle" : city.name,
         }),
       });
 
       if (response.status === 404) {
-        setError("Le backend n'est pas encore déployé : créez le fichier api/search.js dans le dépôt (voir le canvas backend), puis laissez Vercel redéployer.");
+        setError(copy.errBackend);
         return;
       }
       const data = await response.json();
@@ -278,8 +350,8 @@ export default function App() {
         return;
       }
       setResults(data);
-    } catch (err) {
-      setError("Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.");
+    } catch {
+      setError(copy.errNetwork);
     } finally {
       setLoading(false);
     }
@@ -295,21 +367,35 @@ export default function App() {
             </div>
             <div>
               <div className="text-3xl font-extrabold tracking-tight">findforme<span className="text-blue-300">.biz</span></div>
-              <div className="text-blue-200 text-sm">Trouvez l'objet qu'il vous faut, près de vous, dans votre langue</div>
+              <div className="text-blue-200 text-sm">{copy.tagline}</div>
+            </div>
+            <div className="ml-auto flex rounded-xl overflow-hidden border border-white/30">
+              <button
+                onClick={() => setUiLang("fr")}
+                className={`px-3 py-1 text-sm font-semibold ${uiLang === "fr" ? "bg-white text-blue-800" : "text-white hover:bg-white/10"}`}
+              >
+                FR
+              </button>
+              <button
+                onClick={() => setUiLang("en")}
+                className={`px-3 py-1 text-sm font-semibold ${uiLang === "en" ? "bg-white text-blue-800" : "text-white hover:bg-white/10"}`}
+              >
+                EN
+              </button>
             </div>
           </div>
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 pb-16">
-        {page === "how" && <HowPage onBack={() => goTo("home")} />}
-        {page === "legal" && <LegalPage onBack={() => goTo("home")} />}
+        {page === "how" && <DocPage title={copy.howTitle} onBack={() => goTo("home")} sections={HOW_SECTIONS[uiLang]} back={copy.back} />}
+        {page === "legal" && <DocPage title={copy.legalTitle} onBack={() => goTo("home")} sections={LEGAL_SECTIONS[uiLang]} back={copy.back} />}
         {page === "home" && (
         <>
         {/* Où chercher */}
         <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 -mt-6">
           <h2 className="font-semibold mb-3 flex items-center gap-2">
-            <Icon d={ICONS.pin} className="w-4 h-4 text-blue-700" /> Où cherchez-vous ?
+            <Icon d={ICONS.pin} className="w-4 h-4 text-blue-700" /> {copy.searchFor}
           </h2>
           <div className="flex flex-wrap gap-2">
             {CITIES.map((c) => (
@@ -325,22 +411,22 @@ export default function App() {
             ))}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-500">
-            <span>Vous cherchez pour un autre endroit ? Choisissez la ville, ou :</span>
+            <span>{copy.otherPlace}</span>
             <button
               className="text-blue-700 hover:underline font-medium"
               onClick={() => {
                 if (typeof navigator !== "undefined" && navigator.geolocation) {
                   navigator.geolocation.getCurrentPosition(
                     (p) => {
-                      setCustomPos({ lat: p.coords.latitude, lon: p.coords.longitude, label: "Ma position actuelle" });
-                      setGeoMsg("Position réelle détectée : la recherche se fera autour de vous.");
+                      setCustomPos({ lat: p.coords.latitude, lon: p.coords.longitude, label: copy.myPosition });
+                      setGeoMsg(copy.geoOk);
                     },
-                    () => setGeoMsg("Position inaccessible : autorisez la géolocalisation ou choisissez une ville.")
+                    () => setGeoMsg(copy.geoFail)
                   );
                 }
               }}
             >
-              📍 Utiliser ma position réelle
+              {copy.useGps}
             </button>
           </div>
           {geoMsg && <div className="mt-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{geoMsg}</div>}
@@ -353,13 +439,13 @@ export default function App() {
               onClick={() => setMode("text")}
               className={`flex-1 rounded-xl py-2 text-sm font-medium transition ${mode === "text" ? "bg-blue-700 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
             >
-              Recherche par texte
+              {copy.tabText}
             </button>
             <button
               onClick={() => setMode("photo")}
               className={`flex-1 rounded-xl py-2 text-sm font-medium transition inline-flex items-center justify-center gap-2 ${mode === "photo" ? "bg-blue-700 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
             >
-              <Icon d={ICONS.camera} className="w-4 h-4" /> Recherche par photo
+              <Icon d={ICONS.camera} className="w-4 h-4" /> {copy.tabPhoto}
             </button>
           </div>
 
@@ -370,15 +456,15 @@ export default function App() {
                 onChange={(e) => setQueryLang(e.target.value)}
                 className="rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white"
               >
-                {LANGS.map((l) => (
-                  <option key={l} value={l}>Je demande en : {l}</option>
+                {QUERY_LANGS.map((l) => (
+                  <option key={l.value} value={l.value}>{copy.askIn}{uiLang === "fr" ? l.fr : l.en}</option>
                 ))}
               </select>
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && search()}
-                placeholder="Ex. : « je cherche un tournevis »"
+                placeholder={copy.placeholder}
                 className="flex-1 rounded-xl border border-slate-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
@@ -391,12 +477,12 @@ export default function App() {
                 className="w-full border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl py-8 flex flex-col items-center gap-2 text-slate-500 transition"
               >
                 <Icon d={ICONS.camera} className="w-7 h-7" />
-                <span className="text-sm font-medium">Prenez en photo l'objet ou importez une image</span>
+                <span className="text-sm font-medium">{copy.photoPrompt}</span>
               </button>
               <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPhoto} />
               {imageInfo && (
                 <div className="mt-3 text-sm text-slate-600">
-                  Image prête à être analysée : <span className="font-medium">{imageInfo.name}</span>
+                  {copy.photoReady}<span className="font-medium">{imageInfo.name}</span>
                 </div>
               )}
             </div>
@@ -407,7 +493,7 @@ export default function App() {
             disabled={loading}
             className="mt-4 w-full rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white px-5 py-3 text-sm font-semibold transition"
           >
-            {loading ? "Recherche en cours…" : "Trouver près de moi"}
+            {loading ? copy.finding : copy.findBtn}
           </button>
 
           {error && <div className="mt-4 rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-800">{error}</div>}
@@ -418,22 +504,23 @@ export default function App() {
           <>
             <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mt-5">
               <h2 className="font-semibold mb-3 flex items-center gap-2">
-                <Icon d={ICONS.swap} className="w-4 h-4 text-blue-700" /> Exprimez votre demande sur place
+                <Icon d={ICONS.swap} className="w-4 h-4 text-blue-700" /> {copy.translateTitle}
               </h2>
               <div className="flex flex-wrap items-center gap-4">
                 <div>
-                  <div className="text-xs text-slate-500">En français</div>
+                  <div className="text-xs text-slate-500">{uiLang === "fr" ? copy.inFrench : copy.inQueryLang(queryLangLabel(queryLang, uiLang))}</div>
                   <div className="text-xl font-semibold">{results.objet_fr}</div>
                 </div>
                 <div className="text-slate-300 text-2xl">→</div>
                 <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2">
-                  <div className="text-xs text-blue-600">Langue locale ({city.targetLang})</div>
+                  <div className="text-xs text-blue-600">{copy.localLang(localLangName)}</div>
                   <div className="text-xl font-bold text-blue-900">{results.objet_local}</div>
                 </div>
               </div>
+              <p className="text-sm text-slate-500 mt-3">{copy.askInStore(city.name, results.objet_local)}</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="text-xs bg-amber-100 text-amber-800 border border-amber-200 rounded-full px-3 py-1">
-                  ⚠️ {results.stockNote}
+                  {copy.badgeStock}
                 </span>
                 {results.categoryLabels.map((c) => (
                   <span key={c} className="text-xs bg-slate-100 text-slate-600 border border-slate-200 rounded-full px-3 py-1">{c}</span>
@@ -444,10 +531,10 @@ export default function App() {
             <section className="mt-5">
               <h2 className="font-semibold mb-1">
                 {results.stores.length > 0
-                  ? `${results.stores.length} magasin${results.stores.length > 1 ? "s" : ""} trouvé${results.stores.length > 1 ? "s" : ""} près de ${pos.label}`
-                  : "Aucun magasin trouvé à proximité"}
+                  ? copy.storesFound(results.stores.length, pos.label)
+                  : copy.noStores}
               </h2>
-              <p className="text-xs text-slate-400 mb-3">Magasins issus d'OpenStreetMap, triés par distance.</p>
+              <p className="text-xs text-slate-400 mb-3">{copy.osmNote}</p>
               <ul className="space-y-3">
                 {results.stores.map((s, i) => (
                   <li key={`${s.lat},${s.lon},${i}`} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-wrap items-start gap-3">
@@ -473,7 +560,7 @@ export default function App() {
                       rel="noreferrer"
                       className="inline-flex items-center gap-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium px-3.5 py-2 transition"
                     >
-                      <Icon d={ICONS.route} className="w-4 h-4" /> Itinéraire
+                      <Icon d={ICONS.route} className="w-4 h-4" /> {copy.route}
                     </a>
                   </li>
                 ))}
@@ -489,12 +576,18 @@ export default function App() {
 
         <footer className="mt-8 text-center text-xs text-slate-400">
           <div className="flex flex-wrap justify-center gap-4 mb-2">
-            <button onClick={() => goTo("how")} className="text-blue-700 hover:underline font-medium">Comment ça marche</button>
-            <button onClick={() => goTo("legal")} className="text-blue-700 hover:underline font-medium">Confidentialité et mentions légales</button>
+            <button onClick={() => goTo("how")} className="text-blue-700 hover:underline font-medium">{copy.howLink}</button>
+            <button onClick={() => goTo("legal")} className="text-blue-700 hover:underline font-medium">{copy.legalLink}</button>
           </div>
-          findforme.biz · IA Mistral + données OpenStreetMap · disponibilité des stocks non vérifiée en temps réel.
+          findforme.biz · Mistral AI · OpenStreetMap
         </footer>
       </main>
     </div>
   );
+}
+
+function queryLangLabel(value: string, uiLang: UiLang) {
+  const found = QUERY_LANGS.find((l) => l.value === value);
+  if (!found) return value;
+  return uiLang === "fr" ? found.fr : found.en;
 }
