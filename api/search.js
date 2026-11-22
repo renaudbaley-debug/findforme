@@ -10,10 +10,10 @@
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
 
 const OVERPASS_SERVERS = [
-  "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
   "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ];
 
 const SHOP_LABELS = {
@@ -222,7 +222,7 @@ async function overpassOnce(query, budgetMs) {
           },
           body: "data=" + encodeURIComponent(query),
         },
-        Math.max(2000, Math.min(7000, budgetMs))
+        Math.max(2000, Math.min(3500, budgetMs))
       );
       budgetMs -= Date.now() - start;
       if (!response.ok) {
