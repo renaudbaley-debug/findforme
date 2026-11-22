@@ -2,12 +2,14 @@
 // Backend de findforme.biz, version "analyse seule" :
 // - dictionnaire d'objets courants : réponse instantanée sans appeler l'IA
 // - sinon appel à Mistral (traduction + catégories de magasins)
-// - la recherche des magasins sur la carte est faite par le navigateur du
-//   visiteur (voir App.tsx) : ce fichier ne sert plus de relais cartographique,
-//   il répond donc toujours bien en dessous de la limite de 10 s de Vercel.
+// - la recherche des magasins sur la carte est d'abord faite par le navigateur
+//   du visiteur (voir App.tsx) ; en secours, ce fichier interroge Nominatim
+//   et renvoie une liste de magasins de repli. Il répond ainsi toujours bien
+//   en dessous de la limite de 10 s de Vercel.
 // Nécessite la variable d'environnement MISTRAL_API_KEY.
 
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 
 const OVERPASS_SERVERS = [
   "https://overpass.private.coffee/api/interpreter",
@@ -154,6 +156,83 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, au format exac
   const match = String(data.choices?.[0]?.message?.content || "").match(/\{[\s\S]*\}/);
   if (!match) throw new Error("La réponse du modèle n'était pas un JSON valide.");
   return JSON.parse(match[0]);
+}
+
+// ------------------------------------------------------------------
+// Secours Nominatim : liste de magasins par mots-clés dans une fenêtre
+// d'environ 30 km autour de la position. Sert de solution repli si les
+// serveurs Overpass sont injoignables depuis le navigateur du client.
+// ------------------------------------------------------------------
+
+const CATEGORY_SEARCH = {
+  hardware: "hardware", doityourself: "hardware", paint: "paint",
+  secondhand: "second hand", supermarket: "supermarket", convenience: "convenience store",
+  bakery: "bakery", butcher: "butcher", seafood: "seafood", greengrocer: "greengrocer",
+  frozen_food: "frozen food", deli: "deli", chemist: "chemist", beverages: "beverages",
+  electronics: "electronics", computer: "computer", mobile_phone: "mobile phone",
+  stationery: "stationery", books: "bookshop", sports: "sports", bicycle: "bicycle",
+  clothes: "clothes", shoes: "shoes", garden_centre: "garden centre",
+  furniture: "furniture", toys: "toys", photo: "photo shop", gift: "gift shop",
+  florist: "florist", pet: "pet shop", electrical: "electrical",
+};
+
+async function nominatimStores(categories, lat, lon, budgetMs) {
+  const started = Date.now();
+  const terms = (categories || [])
+    .map((c) => CATEGORY_SEARCH[c])
+    .filter(Boolean)
+    .slice(0, 3);
+  const keywords = terms.length > 0 ? terms : ["supermarket"];
+  const viewbox = `${lon - 0.35},${lat + 0.3},${lon + 0.35},${lat - 0.3}`;
+  const seen = new Set();
+  const found = [];
+  let lastError = "";
+  for (const term of keywords) {
+    const remaining = budgetMs - (Date.now() - started);
+    if (remaining < 1500) break;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.min(4000, remaining));
+      const url =
+        NOMINATIM_URL +
+        "?q=" + encodeURIComponent(term) +
+        "&format=jsonv2&limit=15&bounded=1&addressdetails=1" +
+        "&viewbox=" + viewbox;
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "findforme/1.0 (https://www.findforme.biz; contact@findforme.biz)",
+          "Accept-Language": "fr,en",
+        },
+      });
+      clearTimeout(timer);
+      if (!response.ok) { lastError = `Nominatim HTTP ${response.status}`; continue; }
+      const items = await response.json();
+      if (!Array.isArray(items)) continue;
+      for (const it of items) {
+        const sLat = Number(it.lat);
+        const sLon = Number(it.lon);
+        if (!Number.isFinite(sLat) || !Number.isFinite(sLon)) continue;
+        const name = it.name || (it.display_name || "").split(",")[0] || "Magasin non nommé";
+        const key = name + ";" + sLat.toFixed(3) + "," + sLon.toFixed(3);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const address = (it.display_name || "").split(",").slice(1, 4).join(",").trim();
+        found.push({
+          name,
+          address: address || null,
+          lat: sLat,
+          lon: sLon,
+          distanceKm: Math.round(haversine(lat, lon, sLat, sLon) * 10) / 10,
+          cats: [term],
+        });
+      }
+    } catch (err) {
+      lastError = `Nominatim : ${err.name === "AbortError" ? "délai dépassé" : err.message}`;
+    }
+  }
+  found.sort((a, b) => a.distanceKm - b.distanceKm);
+  return { list: found.slice(0, 12), error: found.length === 0 ? (lastError || null) : null };
 }
 
 // ------------------------------------------------------------------
@@ -351,9 +430,20 @@ export default async function handler(req, res) {
     }
   }
 
-  // 2) La recherche de magasins est faite par le navigateur du visiteur,
-  // directement auprès d'OpenStreetMap. Le backend ne renvoie que l'analyse :
-  // la fonction reste rapide et ne s'approche plus de la limite des 10 s.
+  // 2) Magasins : solution de repli Nominatim côté serveur. Le navigateur
+  // du visiteur cherche d'abord via les serveurs Overpass ; s'il ne trouve
+  // rien, c'est cette liste qui s'affiche. La fonction reste rapide :
+  // 3 petites requêtes maximum, protégées par minuteries.
+
+  let stores = [];
+  let fallbackNote = null;
+  try {
+    const fallback = await nominatimStores(analyse.categories_shop, lat, lon, Math.max(4000, left() - 800));
+    stores = fallback.list;
+    if (fallback.error) fallbackNote = fallback.error;
+  } catch {
+    /* la liste restera vide, le navigateur a peut-être déjà trouvé */
+  }
 
   return res.status(200).json({
     objet_fr: analyse.objet_fr,
@@ -362,7 +452,7 @@ export default async function handler(req, res) {
     categoryLabels: (analyse.categories_shop || []).map((c) => SHOP_LABELS[c] || c),
     stockNote: "Disponibilité non vérifiée en temps réel : appelez le magasin si besoin.",
     instant: analyse.fromDictionary === true,
-    debug: { elapsedMs: Date.now() - started },
-    stores: [],
+    debug: { fallback: fallbackNote || "ok", elapsedMs: Date.now() - started },
+    stores,
   });
 }
