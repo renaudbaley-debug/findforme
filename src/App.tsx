@@ -282,6 +282,7 @@ type Store = {
 type Results = {
   objet_fr: string;
   objet_local: string;
+  categories?: string[];
   categoryLabels: string[];
   stockNote: string;
   instant?: boolean;
@@ -327,6 +328,115 @@ function compressImage(file: File): Promise<{ base64: string; type: string }> {
 }
 
 type UiLang = "fr" | "en";
+
+/* ------------------------------------------------------------------ */
+/* Magasins OpenStreetMap, interrogés depuis le navigateur du         */
+/* visiteur (aucune limite de temps de serveur, données publiques)    */
+/* ------------------------------------------------------------------ */
+
+const MAP_SERVERS = [
+  "https://overpass.private.coffee/api/interpreter",
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+
+const MAP_EXTRAS: Record<string, string[]> = {
+  hardware: ["supermarket"],
+  doityourself: ["supermarket"],
+  paint: ["supermarket"],
+  electrical: ["supermarket"],
+  electronics: ["supermarket"],
+  computer: ["supermarket"],
+  mobile_phone: ["supermarket"],
+  seafood: ["supermarket"],
+  chemist: ["supermarket"],
+  supermarket: ["bakery", "convenience"],
+  convenience: ["supermarket"],
+};
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function mapQuery(cats: string[], lat: number, lon: number, radius: number, limit: number) {
+  const clauses: string[] = [];
+  for (const c of cats) {
+    clauses.push(`node["shop"="${c}"](around:${radius},${lat},${lon});`);
+    clauses.push(`way["shop"="${c}"](around:${radius},${lat},${lon});`);
+  }
+  return `[out:json][timeout:25];(\n  ${clauses.join("\n  ")}\n);out center ${limit};`;
+}
+
+async function callMapServer(server: string, query: string): Promise<Record<string, unknown>[] | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(server, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "data=" + encodeURIComponent(query),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return Array.isArray(data?.elements) ? data.elements : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchMapStores(categories: string[], lat: number, lon: number): Promise<Store[]> {
+  const runPass = async (cats: string[], radius: number, limit: number) => {
+    const query = mapQuery(cats, lat, lon, radius, limit);
+    for (const server of MAP_SERVERS) {
+      const elements = await callMapServer(server, query);
+      if (elements && elements.length > 0) return elements;
+    }
+    return [] as Record<string, unknown>[];
+  };
+
+  let elements = await runPass(categories.slice(0, 3), 15000, 60);
+  if (elements.length === 0) {
+    const broad = Array.from(
+      new Set([...categories, ...categories.flatMap((c) => MAP_EXTRAS[c] || [])])
+    ).slice(0, 4);
+    elements = await runPass(broad, 45000, 40);
+  }
+
+  const list: Store[] = [];
+  for (const el of elements) {
+    const anyEl = el as { lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> };
+    const sLat = typeof anyEl.lat === "number" ? anyEl.lat : anyEl.center?.lat;
+    const sLon = typeof anyEl.lon === "number" ? anyEl.lon : anyEl.center?.lon;
+    if (sLat === undefined || sLon === undefined) continue;
+    const tags = anyEl.tags || {};
+    const address = [
+      [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" "),
+      tags["addr:postcode"],
+      tags["addr:city"],
+    ].filter(Boolean).join(", ");
+    list.push({
+      name: tags.name || tags.operator || tags.brand || "Magasin non nommé",
+      address: address || null,
+      lat: sLat,
+      lon: sLon,
+      distanceKm: Math.round(haversineKm(lat, lon, sLat, sLon) * 10) / 10,
+      categories: tags.shop ? [tags.shop] : [],
+    });
+  }
+  list.sort((a, b) => a.distanceKm - b.distanceKm);
+  return list.slice(0, 12);
+}
 type Page = "home" | "how" | "faq" | "guides" | "legal";
 
 function DocPage({ title, onBack, sections, back }: { title: string; onBack: () => void; sections: { h: string; p: string }[]; back: string }) {
@@ -491,7 +601,14 @@ export default function App() {
         setError(data.error || `Erreur du serveur (code ${response.status}).`);
         return;
       }
-      setResults(data);
+      // L'analyse vient du serveur ; les magasins sont cherchés directement
+      // depuis le navigateur auprès d'OpenStreetMap (aucune limite de 10 s).
+      const mapCats =
+        data.categories && data.categories.length > 0
+          ? data.categories
+          : ["supermarket", "hardware", "doityourself"];
+      const stores = await fetchMapStores(mapCats, place.lat, place.lon);
+      setResults({ ...data, stores });
     } catch {
       setError(copy.errNetwork);
     } finally {
