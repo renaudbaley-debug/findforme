@@ -10,8 +10,10 @@
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
 
 const OVERPASS_SERVERS = [
-  "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass-api.de/api/interpreter",
 ];
 
 const SHOP_LABELS = {
@@ -240,6 +242,8 @@ async function overpassOnce(query, budgetMs) {
 }
 
 async function findStores(categoriesAsked, lat, lon, budgetMs) {
+  const startedAt = Date.now();
+  const leftStores = () => budgetMs - (Date.now() - startedAt);
   const safe = (categoriesAsked || []).filter((c) => ALLOWED_SHOPS.includes(c));
   const categories = safe.slice(0, 3).length > 0 ? safe.slice(0, 3) : ["supermarket", "hardware", "doityourself"];
   const baseKey = categories.join(",") + ";" + lat.toFixed(2) + "," + lon.toFixed(2);
@@ -253,8 +257,11 @@ async function findStores(categoriesAsked, lat, lon, budgetMs) {
   let attempt = await overpassOnce(overpassQuery(categories, lat, lon, 15000, 60), budgetMs);
   let elements = attempt.elements;
 
-  // Seconde passe élargie uniquement s'il reste du temps et rien trouvé
-  if (elements.length === 0 && !attempt.error) {
+  // Seconde passe élargie si rien trouvé (même en cas d'erreur serveur) et s'il reste du temps
+  if (elements.length === 0) {
+    if (leftStores() < 3000) {
+      return { list: [], error: attempt.error || "plus assez de temps pour élargir la recherche." };
+    }
     const broad = [...new Set([...categories, ...defaultExtra(categories)])].slice(0, 4);
     const key2 = broad.join(",") + ";" + lat.toFixed(2) + "," + lon.toFixed(2);
     const cached2 = cache.get(key2);
@@ -271,7 +278,7 @@ async function findStores(categoriesAsked, lat, lon, budgetMs) {
   }
 
   const parsed = parseStores(elements, lat, lon).sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 12);
-  cache.set(baseKey, { list: parsed, date: Date.now() });
+  if (parsed.length > 0) cache.set(baseKey, { list: parsed, date: Date.now() });
   return { list: parsed, error: attempt.error || null };
 }
 
@@ -358,6 +365,7 @@ export default async function handler(req, res) {
       ? `Carte indisponible pour le moment : ${mapError}`
       : "Disponibilité non vérifiée en temps réel : appelez le magasin si besoin.",
     instant: analyse.fromDictionary === true,
+    debug: { overpass: mapError || "ok", elapsedMs: Date.now() - started },
     stores: list,
   });
 }
