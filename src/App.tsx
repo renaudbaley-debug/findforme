@@ -607,12 +607,21 @@ export default function App() {
       }
       // L'analyse vient du serveur ; les magasins sont cherchés directement
       // depuis le navigateur auprès d'OpenStreetMap (aucune limite de 10 s).
+      // Si les serveurs de cartes sont injoignables depuis ce navigateur,
+      // on garde la liste de secours préparée par le serveur (Nominatim).
       const mapCats =
         data.categories && data.categories.length > 0
           ? data.categories
           : ["supermarket", "hardware", "doityourself"];
       const stores = await fetchMapStores(mapCats, place.lat, place.lon);
-      setResults({ ...data, stores });
+      const fallbackStores: Store[] = (data.stores || []).map((s: any) => ({
+        ...s,
+        categories: s.categories || s.cats || [],
+      }));
+      setResults({
+        ...data,
+        stores: stores.length > 0 ? stores : fallbackStores,
+      });
     } catch {
       setError(copy.errNetwork);
     } finally {
