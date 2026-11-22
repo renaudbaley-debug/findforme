@@ -337,6 +337,7 @@ type UiLang = "fr" | "en";
 const MAP_SERVERS = [
   "https://overpass.private.coffee/api/interpreter",
   "https://overpass-api.de/api/interpreter",
+  "https://overpass.osm.jp/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
   "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ];
@@ -377,12 +378,11 @@ function mapQuery(cats: string[], lat: number, lon: number, radius: number, limi
 
 async function callMapServer(server: string, query: string): Promise<Record<string, unknown>[] | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const response = await fetch(server, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "data=" + encodeURIComponent(query),
+    // Requête GET : plus légère, bien acceptée par tous les miroirs Overpass.
+    const response = await fetch(`${server}?data=${encodeURIComponent(query)}`, {
+      method: "GET",
       signal: controller.signal,
     });
     if (!response.ok) return null;
@@ -402,6 +402,11 @@ async function fetchMapStores(categories: string[], lat: number, lon: number): P
       const elements = await callMapServer(server, query);
       if (elements && elements.length > 0) return elements;
     }
+    // Les pannes de saturation sont souvent brèves : on retente une fois
+    // le premier serveur après une courte pause.
+    await new Promise((r) => setTimeout(r, 700));
+    const elements = await callMapServer(MAP_SERVERS[0], query);
+    if (elements && elements.length > 0) return elements;
     return [] as Record<string, unknown>[];
   };
 
