@@ -37,7 +37,7 @@ export default async function handler(req, res) {
     const url = `${NOMINATIM_URL}?format=jsonv2&limit=6&addressdetails=1&accept-language=fr&q=${encodeURIComponent(q)}`;
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "findforme/1.0 (+https://www.findforme.biz; contact@findforme.biz)",
+        "User-Agent": "findforme/1.0 (+https://www.findforme.biz; renaud.baley@gmail.com)",
         "Accept-Language": "fr",
       },
     });
