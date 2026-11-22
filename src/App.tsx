@@ -245,7 +245,7 @@ const GUIDE_CONTENT = {
 
 const LEGAL_SECTIONS = {
   fr: [
-    { h: "Éditeur du site", p: "Site findforme.biz, édité à titre personnel par [votre prénom et nom], [votre adresse], contact : [votre adresse e-mail]." },
+    { h: "Éditeur du site", p: "Site findforme.biz, édité à titre personnel par RBA." },
     { h: "Hébergement", p: "Site hébergé par Vercel (vercel.com)." },
     { h: "Données envoyées lors d'une recherche", p: "Aucun compte, aucune inscription : le site ne vous demande pas d'identité. Lors d'une recherche, votre texte ou votre photo, ainsi que la position choisie, sont envoyés à notre serveur : le texte ou la photo est transmis au service d'analyse (Mistral AI) pour identifier l'objet et le traduire ; la position sert à chercher les magasins proches dans OpenStreetMap. Ces éléments servent uniquement à répondre à votre demande." },
     { h: "Géolocalisation", p: "Une position approximative est déduite de votre connexion internet pour suggérer un point de recherche ; vous pouvez la refuser. La position GPS précise n'est utilisée que si vous cliquez sur « Position GPS précise » et autorisez le navigateur. Aucune position n'est conservée après la recherche." },
@@ -255,7 +255,7 @@ const LEGAL_SECTIONS = {
     { h: "Droit applicable", p: "Le site est soumis au droit de [votre pays]." },
   ],
   en: [
-    { h: "Site publisher", p: "Website findforme.biz, published on a personal basis by [your first and last name], [your address], contact: [your e-mail address]." },
+    { h: "Site publisher", p: "Website findforme.biz, published on a personal basis by RBA." },
     { h: "Hosting", p: "Hosted by Vercel (vercel.com)." },
     { h: "Data sent during a search", p: "No account, no sign-up: the site does not ask for your identity. During a search, your text or photo, together with the chosen location, are sent to our server: the text or photo is passed to the analysis service (Mistral AI) to identify and translate the object; the location is used to find nearby stores in OpenStreetMap. These elements are used solely to answer your request." },
     { h: "Geolocation", p: "An approximate position is derived from your connection to suggest a search point; you can dismiss it. Your precise GPS position is only used if you click \"Precise GPS location\" and let your browser share it. No position is kept after the search." },
