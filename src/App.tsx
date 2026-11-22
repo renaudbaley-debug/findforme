@@ -501,6 +501,7 @@ export default function App() {
   const [results, setResults] = useState<Results | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const searchSeq = useRef(0);
   const [page, setPage] = useState<Page>("home");
 
   // Détection automatique par IP (sans autorisation)
@@ -605,22 +606,24 @@ export default function App() {
         setError(data.error || `Erreur du serveur (code ${response.status}).`);
         return;
       }
-      // L'analyse vient du serveur ; les magasins sont cherchés directement
-      // depuis le navigateur auprès d'OpenStreetMap (aucune limite de 10 s).
-      // Si les serveurs de cartes sont injoignables depuis ce navigateur,
-      // on garde la liste de secours préparée par le serveur (Nominatim).
+      // La liste de secours (préparée par le serveur via Nominatim) s'affiche
+      // immédiatement. En parallèle, le navigateur tente la recherche directe
+      // auprès des serveurs de cartes : si elle aboutit, la liste est remplacée
+      // par la version plus complète.
       const mapCats =
         data.categories && data.categories.length > 0
           ? data.categories
           : ["supermarket", "hardware", "doityourself"];
-      const stores = await fetchMapStores(mapCats, place.lat, place.lon);
       const fallbackStores: Store[] = (data.stores || []).map((s: any) => ({
         ...s,
         categories: s.categories || s.cats || [],
       }));
-      setResults({
-        ...data,
-        stores: stores.length > 0 ? stores : fallbackStores,
+      setResults({ ...data, stores: fallbackStores });
+      const seq = ++searchSeq.current;
+      fetchMapStores(mapCats, place.lat, place.lon).then((stores) => {
+        if (stores.length > 0 && searchSeq.current === seq) {
+          setResults((prev) => (prev ? { ...prev, stores } : prev));
+        }
       });
     } catch {
       setError(copy.errNetwork);
