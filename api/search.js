@@ -1,8 +1,10 @@
 // api/search.js
-// Backend de findforme.biz, fonction serverless Vercel, version accélérée :
-// - Mistral et OpenStreetMap interrogés EN PARALLÈLE (au lieu de l'un après l'autre)
-// - réponses de carte mémorisées 30 minutes par zone (cache en mémoire)
+// Backend de findforme.biz, version légère, calibrée pour la limite de 10 s
+// des fonctions serverless Vercel :
 // - dictionnaire d'objets courants : réponse instantanée sans appeler l'IA
+// - requête OpenStreetMap ciblée et petite (rayon 15 km, 60 résultats max)
+// - minuteries d'annulation sur chaque appel réseau, budget de temps global
+// - réponses mémorisées 30 minutes par zone et par catégories
 // Nécessite la variable d'environnement MISTRAL_API_KEY.
 
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
@@ -10,7 +12,6 @@ const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
 const OVERPASS_SERVERS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
-  "https://overpass.private.coffee/api/interpreter",
 ];
 
 const SHOP_LABELS = {
@@ -27,14 +28,7 @@ const SHOP_LABELS = {
 };
 
 const ALLOWED_SHOPS = Object.keys(SHOP_LABELS);
-
-// Catégories les plus demandées, interrogées d'avance en parallèle de l'IA.
-// Elles couvrent l'immense majorité des recherches.
-const BROAD_CATS = [
-  "hardware", "doityourself", "supermarket", "electronics", "convenience",
-  "electrical", "appliance", "secondhand", "seafood", "bakery", "butcher",
-  "greengrocer", "chemist", "mobile_phone", "computer",
-];
+const TOTAL_BUDGET_MS = 9000; // marge sur la limite Vercel de 10 s
 
 const LANG_CODE = {
   "français": "fr", "french": "fr", "anglais": "en", "english": "en",
@@ -48,16 +42,15 @@ const LANG_CODE = {
 
 const DICT = [
   { keys: ["tournevis", "screwdriver", "schraubendreher", "schroevendraaier", "destornillador"], fr: "tournevis", en: "screwdriver", de: "Schraubendreher", nl: "schroevendraaier", es: "destornillador", cats: ["hardware", "doityourself", "secondhand"] },
-  { keys: ["marteau", "hammer", "hamer", "martillo", "claw hammer"], fr: "marteau", en: "hammer", de: "Hammer", nl: "hamer", es: "martillo", cats: ["hardware", "doityourself", "secondhand"] },
+  { keys: ["marteau", "hammer", "hamer", "martillo"], fr: "marteau", en: "hammer", de: "Hammer", nl: "hamer", es: "martillo", cats: ["hardware", "doityourself", "secondhand"] },
   { keys: ["clou", "nail", "nagel", "spijker", "clavo"], fr: "clou", en: "nail", de: "Nagel", nl: "spijker", es: "clavo", cats: ["hardware", "doityourself"] },
   { keys: ["perceuse", "visseuse", "drill", "bohrmaschine", "boormachine", "taladro"], fr: "perceuse", en: "drill", de: "Bohrmaschine", nl: "boormachine", es: "taladro", cats: ["hardware", "doityourself", "secondhand"] },
-  { keys: ["vis", "screw", "schraube", "schroef", "tornillo"], fr: "vis", en: "screw", de: "Schraube", nl: "schroef", es: "tornillo", cats: ["hardware", "doityourself"] },
   { keys: ["scie", "saw", "säge", "zaag", "sierra"], fr: "scie", en: "saw", de: "Säge", nl: "zaag", es: "sierra", cats: ["hardware", "doityourself"] },
   { keys: ["pelle", "shovel", "schaufel", "schep", "pala"], fr: "pelle", en: "shovel", de: "Schaufel", nl: "schep", es: "pala", cats: ["hardware", "doityourself", "garden_centre"] },
   { keys: ["rouleau", "paint roller", "farbrolle", "verfroller", "rodillo"], fr: "rouleau de peinture", en: "paint roller", de: "Farbrolle", nl: "verfroller", es: "rodillo de pintura", cats: ["paint", "hardware", "doityourself"] },
   { keys: ["colle", "glue", "kleber", "lijm", "pegamento"], fr: "colle", en: "glue", de: "Kleber", nl: "lijm", es: "pegamento", cats: ["hardware", "doityourself", "supermarket"] },
   { keys: ["ruban adhesif", "adhesive tape", "duct tape", "klebeband", "plakband", "cinta adhesiva"], fr: "ruban adhésif", en: "adhesive tape", de: "Klebeband", nl: "plakband", es: "cinta adhesiva", cats: ["hardware", "supermarket", "doityourself"] },
-  { keys: ["pile", "batterie", "battery", "batterij", "aa battery"], fr: "pile", en: "battery", de: "Batterie", nl: "batterij", es: "pila", cats: ["electronics", "supermarket", "convenience"] },
+  { keys: ["pile", "batterie", "battery", "batterij"], fr: "pile", en: "battery", de: "Batterie", nl: "batterij", es: "pila", cats: ["electronics", "supermarket", "convenience"] },
   { keys: ["ampoule", "light bulb", "glühbirne", "gloeilamp", "bombilla"], fr: "ampoule", en: "light bulb", de: "Glühbirne", nl: "gloeilamp", es: "bombilla", cats: ["supermarket", "hardware", "doityourself"] },
   { keys: ["chargeur", "charger", "ladegerät", "oplader", "cargador"], fr: "chargeur", en: "charger", de: "Ladegerät", nl: "oplader", es: "cargador", cats: ["electronics", "mobile_phone", "computer", "supermarket"] },
   { keys: ["cable usb", "usb cable", "usb-kabel", "usb-kabel", "cable usb", "cordon usb"], fr: "câble USB", en: "USB cable", de: "USB-Kabel", nl: "USB-kabel", es: "cable USB", cats: ["electronics", "computer", "supermarket"] },
@@ -66,9 +59,9 @@ const DICT = [
   { keys: ["parapluie", "umbrella", "regenschirm", "paraplu", "paraguas"], fr: "parapluie", en: "umbrella", de: "Regenschirm", nl: "paraplu", es: "paraguas", cats: ["supermarket", "convenience", "secondhand"] },
   { keys: ["cadenas", "padlock", "vorhängeschloss", "hangslot", "candado"], fr: "cadenas", en: "padlock", de: "Vorhängeschloss", nl: "hangslot", es: "candado", cats: ["hardware", "doityourself", "supermarket"] },
   { keys: ["lampe de poche", "lampe torche", "flashlight", "torch", "taschenlampe", "zaklamp", "linterna"], fr: "lampe de poche", en: "flashlight", de: "Taschenlampe", nl: "zaklamp", es: "linterna", cats: ["electronics", "hardware", "supermarket"] },
-  { keys: ["bougies", "candle", "kerze", "kaars", "vela"], fr: "bougie", en: "candle", de: "Kerze", nl: "kaars", es: "vela", cats: ["supermarket", "convenience", "florist"] },
+  { keys: ["bougie", "candle", "kerze", "kaars", "vela"], fr: "bougie", en: "candle", de: "Kerze", nl: "kaars", es: "vela", cats: ["supermarket", "convenience", "florist"] },
   { keys: ["allumettes", "matches", "streichhölzer", "lucifers", "cerillas"], fr: "allumettes", en: "matches", de: "Streichhölzer", nl: "lucifers", es: "cerillas", cats: ["supermarket", "convenience"] },
-  { keys: ["pain", "bread", "brot", "brood", "pan", "baguette"], fr: "pain", en: "bread", de: "Brot", nl: "brood", es: "pan", cats: ["bakery", "supermarket", "convenience"] },
+  { keys: ["pain", "bread", "brot", "brood", "baguette"], fr: "pain", en: "bread", de: "Brot", nl: "brood", es: "pan", cats: ["bakery", "supermarket", "convenience"] },
   { keys: ["lait", "milk", "milch", "melk", "leche"], fr: "lait", en: "milk", de: "Milch", nl: "melk", es: "leche", cats: ["supermarket", "convenience"] },
   { keys: ["oeufs", "eggs", "eier", "eieren", "huevos"], fr: "œufs", en: "eggs", de: "Eier", nl: "eieren", es: "huevos", cats: ["supermarket", "convenience"] },
   { keys: ["beurre", "butter", "boter", "mantequilla"], fr: "beurre", en: "butter", de: "Butter", nl: "boter", es: "mantequilla", cats: ["supermarket", "convenience"] },
@@ -93,24 +86,27 @@ function lookupDict(rawQuery) {
     for (const key of item.keys) {
       const k = normalize(key);
       if (!k) continue;
-      if (q === k) return item;
-      if (q.includes(k) || words.includes(k)) return item;
+      if (q === k || (k.length >= 4 && q.includes(k)) || words.includes(k)) return item;
     }
   }
   return null;
 }
 
 // ------------------------------------------------------------------
-// Mistral
+// Appels réseau protégés par minuterie
 // ------------------------------------------------------------------
 
-function extractJson(text) {
-  const match = String(text).match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("La réponse du modèle n'était pas un JSON valide.");
-  return JSON.parse(match[0]);
+async function fetchWithTimeout(url, options, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-async function askMistral(apiKey, params) {
+async function askMistral(apiKey, params, budgetMs) {
   const { query, imageBase64, imageType, queryLang, targetLang, cityName } = params;
 
   const prompt = `Tu aides un service de recherche d'objets en magasin près de soi.
@@ -133,30 +129,36 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, au format exac
     content.push({ type: "text", text: `Recherche de l'utilisateur : « ${query} »` });
   }
 
-  const response = await fetch(MISTRAL_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: imageBase64 ? "pixtral-12b-latest" : "mistral-small-latest",
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content }],
-    }),
-  });
+  const response = await fetchWithTimeout(
+    MISTRAL_URL,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: imageBase64 ? "pixtral-12b-latest" : "mistral-small-latest",
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content }],
+      }),
+    },
+    budgetMs
+  );
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`Appel Mistral en échec (${response.status}) : ${detail.slice(0, 300)}`);
+    throw new Error(`Appel Mistral en échec (${response.status}) : ${detail.slice(0, 200)}`);
   }
   const data = await response.json();
-  return extractJson(data.choices[0].message.content);
+  const match = String(data.choices?.[0]?.message?.content || "").match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("La réponse du modèle n'était pas un JSON valide.");
+  return JSON.parse(match[0]);
 }
 
 // ------------------------------------------------------------------
-// OpenStreetMap / Overpass, avec cache de 30 minutes par zone
+// OpenStreetMap / Overpass : petites requêtes ciblées, avec cache
 // ------------------------------------------------------------------
 
-const nearbyCache = new Map(); // clé: "lat,arrondi;lon,arrondi" -> { list, date }
+const cache = new Map(); // "lat,lon;cats" -> { list, date }
 const CACHE_MS = 30 * 60 * 1000;
 
 function haversine(lat1, lon1, lat2, lon2) {
@@ -176,33 +178,7 @@ function overpassQuery(categories, lat, lon, radiusMeters, limit) {
     clauses.push(`node["shop"="${cat}"](around:${radiusMeters},${lat},${lon});`);
     clauses.push(`way["shop"="${cat}"](around:${radiusMeters},${lat},${lon});`);
   }
-  return `[out:json][timeout:25];(\n  ${clauses.join("\n  ")}\n);out center ${limit};`;
-}
-
-async function fetchOverpassAny(query) {
-  let lastError = "";
-  for (const server of OVERPASS_SERVERS) {
-    try {
-      const response = await fetch(server, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "findforme/1.0 (+https://www.findforme.biz)",
-        },
-        body: "data=" + encodeURIComponent(query),
-      });
-      if (!response.ok) {
-        lastError = `${server} → HTTP ${response.status}`;
-        continue;
-      }
-      const data = await response.json();
-      if (Array.isArray(data.elements)) return { elements: data.elements };
-      lastError = `${server} → réponse inattendue`;
-    } catch (err) {
-      lastError = `${server} → ${err.message}`;
-    }
-  }
-  return { elements: [], error: `aucun serveur de carte n'a répondu (${lastError}). Réessayez dans une minute.` };
+  return `[out:json][timeout:8];(\n  ${clauses.join("\n  ")}\n);out center ${limit};`;
 }
 
 function parseStores(elements, lat, lon) {
@@ -229,51 +205,87 @@ function parseStores(elements, lat, lon) {
   return list;
 }
 
-// Liste de magasins d'une zone : mémo 30 min, calculée une seule fois par zone
-async function getNearby(lat, lon) {
-  const key = `${lat.toFixed(2)};${lon.toFixed(2)}`;
-  const cached = nearbyCache.get(key);
-  if (cached && Date.now() - cached.date < CACHE_MS) {
-    return { list: cached.list, error: null };
+async function overpassOnce(query, budgetMs) {
+  let lastError = "";
+  for (const server of OVERPASS_SERVERS) {
+    const start = Date.now();
+    try {
+      const response = await fetchWithTimeout(
+        server,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "findforme/1.0 (+https://www.findforme.biz)",
+          },
+          body: "data=" + encodeURIComponent(query),
+        },
+        Math.max(2000, Math.min(7000, budgetMs))
+      );
+      budgetMs -= Date.now() - start;
+      if (!response.ok) {
+        lastError = `${server} → HTTP ${response.status}`;
+        continue;
+      }
+      const data = await response.json();
+      if (Array.isArray(data.elements)) return { elements: data.elements };
+      lastError = `${server} → réponse inattendue`;
+    } catch (err) {
+      budgetMs -= Date.now() - start;
+      lastError = `${server} → ${err.name === "AbortError" ? "délai dépassé" : err.message}`;
+    }
+    if (budgetMs < 2000) break;
   }
-  const attempt = await fetchOverpassAny(overpassQuery(BROAD_CATS, lat, lon, 25000, 300));
-  if (attempt.error) return { list: [], error: attempt.error };
-  const list = parseStores(attempt.elements, lat, lon);
-  nearbyCache.set(key, { list, date: Date.now() });
-  return { list, error: null };
+  return { elements: [], error: `aucun serveur de carte n'a répondu (${lastError}).` };
 }
 
-// Recherche ciblée (rare) : les catégories IA sortent du lot prédéfini
-async function getTargeted(categories, lat, lon) {
-  const safe = (categories || []).filter((c) => ALLOWED_SHOPS.includes(c));
-  if (safe.length === 0) return { list: [], error: null };
-  const attempt = await fetchOverpassAny(overpassQuery(safe, lat, lon, 40000, 80));
-  if (attempt.error) return { list: [], error: attempt.error };
-  return { list: parseStores(attempt.elements, lat, lon), error: null };
+async function findStores(categoriesAsked, lat, lon, budgetMs) {
+  const safe = (categoriesAsked || []).filter((c) => ALLOWED_SHOPS.includes(c));
+  const categories = safe.slice(0, 3).length > 0 ? safe.slice(0, 3) : ["supermarket", "hardware", "doityourself"];
+  const baseKey = categories.join(",") + ";" + lat.toFixed(2) + "," + lon.toFixed(2);
+
+  const cached = cache.get(baseKey);
+  if (cached && Date.now() - cached.date < CACHE_MS) {
+    return { list: cached.list, error: null, fromCache: true };
+  }
+
+  // Première passe : rayon 15 km
+  let attempt = await overpassOnce(overpassQuery(categories, lat, lon, 15000, 60), budgetMs);
+  let elements = attempt.elements;
+
+  // Seconde passe élargie uniquement s'il reste du temps et rien trouvé
+  if (elements.length === 0 && !attempt.error) {
+    const broad = [...new Set([...categories, ...defaultExtra(categories)])].slice(0, 4);
+    const key2 = broad.join(",") + ";" + lat.toFixed(2) + "," + lon.toFixed(2);
+    const cached2 = cache.get(key2);
+    if (cached2 && Date.now() - cached2.date < CACHE_MS) {
+      return { list: cached2.list, error: null, fromCache: true };
+    }
+    attempt = await overpassOnce(overpassQuery(broad, lat, lon, 45000, 40), budgetMs);
+    elements = attempt.elements;
+    if (elements.length > 0) {
+      const parsed = parseStores(elements, lat, lon).sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 12);
+      cache.set(key2, { list: parsed, date: Date.now() });
+      return { list: parsed, error: null };
+    }
+  }
+
+  const parsed = parseStores(elements, lat, lon).sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 12);
+  cache.set(baseKey, { list: parsed, date: Date.now() });
+  return { list: parsed, error: attempt.error || null };
 }
 
-function selectStores(all, wantedCats, lat, lon) {
-  const wanted = new Set((wantedCats || []).filter((c) => ALLOWED_SHOPS.includes(c)));
-  let pool = wanted.size > 0 ? all.filter((s) => s.cats.some((c) => wanted.has(c))) : all;
-  if (pool.length === 0) pool = all;
-  const seen = new Set();
-  return pool
-    .slice().sort((a, b) => a.distanceKm - b.distanceKm)
-    .filter((s) => {
-      const k = s.name + "@" + s.lat.toFixed(4) + "," + s.lon.toFixed(4);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    })
-    .slice(0, 12)
-    .map((s) => ({
-      name: s.name,
-      address: s.address,
-      lat: s.lat,
-      lon: s.lon,
-      distanceKm: s.distanceKm,
-      categories: s.cats.map((c) => SHOP_LABELS[c] || c),
-    }));
+// Catégories compagnes utiles si la première passe ne trouve rien
+function defaultExtra(cats) {
+  const extras = new Set();
+  for (const c of cats) {
+    if (c === "hardware" || c === "doityourself" || c === "paint" || c === "electrical") extras.add("supermarket");
+    if (c === "supermarket" || c === "convenience") extras.add("bakery");
+    if (c === "electronics" || c === "computer" || c === "mobile_phone") extras.add("supermarket");
+    if (c === "seafood") extras.add("supermarket");
+    if (c === "chemist") extras.add("supermarket");
+  }
+  return [...extras];
 }
 
 // ------------------------------------------------------------------
@@ -281,6 +293,9 @@ function selectStores(all, wantedCats, lat, lon) {
 // ------------------------------------------------------------------
 
 export default async function handler(req, res) {
+  const started = Date.now();
+  const left = () => TOTAL_BUDGET_MS - (Date.now() - started);
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Utilisez la méthode POST." });
   }
@@ -294,12 +309,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Fournissez un texte (query) ou une image (imageBase64)." });
   }
 
-  // 1) Interroger la carte tout de suite, en parallèle de l'analyse
-  const nearbyPromise = getNearby(lat, lon);
-
-  // 2) Analyse : dictionnaire instantané si possible, sinon Mistral
+  // 1) Analyse : dictionnaire instantané si possible, sinon Mistral
   let analyse = null;
-  let analyseError = null;
   const dictHit = query ? lookupDict(query) : null;
 
   if (dictHit) {
@@ -318,42 +329,26 @@ export default async function handler(req, res) {
       });
     }
     try {
-      analyse = await askMistral(apiKey, {
-        query, imageBase64, imageType,
-        queryLang: queryLang || "français",
-        targetLang: targetLang || "la langue locale",
-        cityName: cityName || "la ville donnée par la position",
-      });
+      analyse = await askMistral(
+        apiKey,
+        {
+          query, imageBase64, imageType,
+          queryLang: queryLang || "français",
+          targetLang: targetLang || "la langue locale",
+          cityName: cityName || "la ville donnée par la position",
+        },
+        left() - 2000 // garder au moins 2 s pour la recherche de magasins
+      );
     } catch (err) {
-      analyseError = err.message || "Erreur pendant l'analyse de la demande.";
+      return res.status(502).json({ error: err.message || "Erreur pendant l'analyse de la demande." });
     }
   }
 
-  if (analyseError) {
-    return res.status(502).json({ error: analyseError });
-  }
+  // 2) Recherche de magasins ciblée, protégée par le temps restant
+  const storesResult = await findStores(analyse.categories_shop, lat, lon, Math.max(2000, left() - 500));
 
-  // 3) Fusion : liste de magasins + catégories de l'analyse
-  const nearby = await nearbyPromise;
-  let pool = nearby.list;
-  let mapError = nearby.error;
-
-  let list = selectStores(pool, analyse.categories_shop, lat, lon);
-
-  // Si la liste précalculée ne couvre pas les catégories voulues, requête ciblée
-  const wantedSet = new Set((analyse.categories_shop || []).filter((c) => ALLOWED_SHOPS.includes(c)));
-  const covered = new Set(BROAD_CATS);
-  const outside = [...wantedSet].filter((c) => !covered.has(c));
-  const filteredHadResults = list.length > 0 && wantedSet.size > 0 &&
-    list.some((s) => s.categories.length > 0);
-
-  if ((wantedSet.size > 0 && list.length === 0 && pool.length === 0) || (outside.length > 0 && !filteredHadResults)) {
-    const targeted = await getTargeted(analyse.categories_shop, lat, lon);
-    if (targeted.list.length > 0) {
-      list = selectStores(targeted.list, analyse.categories_shop, lat, lon);
-    }
-    if (targeted.error) mapError = targeted.error;
-  }
+  const mapError = storesResult.error;
+  const list = storesResult.list;
 
   return res.status(200).json({
     objet_fr: analyse.objet_fr,
