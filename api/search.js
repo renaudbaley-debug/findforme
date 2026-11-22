@@ -1,10 +1,10 @@
 // api/search.js
-// Backend de findforme.biz, version légère, calibrée pour la limite de 10 s
-// des fonctions serverless Vercel :
+// Backend de findforme.biz, version "analyse seule" :
 // - dictionnaire d'objets courants : réponse instantanée sans appeler l'IA
-// - requête OpenStreetMap ciblée et petite (rayon 15 km, 60 résultats max)
-// - minuteries d'annulation sur chaque appel réseau, budget de temps global
-// - réponses mémorisées 30 minutes par zone et par catégories
+// - sinon appel à Mistral (traduction + catégories de magasins)
+// - la recherche des magasins sur la carte est faite par le navigateur du
+//   visiteur (voir App.tsx) : ce fichier ne sert plus de relais cartographique,
+//   il répond donc toujours bien en dessous de la limite de 10 s de Vercel.
 // Nécessite la variable d'environnement MISTRAL_API_KEY.
 
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
@@ -351,21 +351,18 @@ export default async function handler(req, res) {
     }
   }
 
-  // 2) Recherche de magasins ciblée, protégée par le temps restant
-  const storesResult = await findStores(analyse.categories_shop, lat, lon, Math.max(2000, left() - 500));
-
-  const mapError = storesResult.error;
-  const list = storesResult.list;
+  // 2) La recherche de magasins est faite par le navigateur du visiteur,
+  // directement auprès d'OpenStreetMap. Le backend ne renvoie que l'analyse :
+  // la fonction reste rapide et ne s'approche plus de la limite des 10 s.
 
   return res.status(200).json({
     objet_fr: analyse.objet_fr,
     objet_local: analyse.objet_local,
+    categories: analyse.categories_shop || [],
     categoryLabels: (analyse.categories_shop || []).map((c) => SHOP_LABELS[c] || c),
-    stockNote: mapError
-      ? `Carte indisponible pour le moment : ${mapError}`
-      : "Disponibilité non vérifiée en temps réel : appelez le magasin si besoin.",
+    stockNote: "Disponibilité non vérifiée en temps réel : appelez le magasin si besoin.",
     instant: analyse.fromDictionary === true,
-    debug: { overpass: mapError || "ok", elapsedMs: Date.now() - started },
-    stores: list,
+    debug: { elapsedMs: Date.now() - started },
+    stores: [],
   });
 }
